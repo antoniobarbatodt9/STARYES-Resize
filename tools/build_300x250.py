@@ -27,10 +27,11 @@ def slide1():
     allm=np.zeros_like(M['scopri'])
     for m in M.values(): allm|=m
     pl=plate(src,allm)
-    amb=ambient(pl,[(190,800,840,1300),(100,1300,925,1510)])
+    M={k:textmask(src,[b],dil=5) for k,b in B.items()}
+    amb=ambient_soft(pl,[(200,820,830,1290),(110,1310,915,1500)])
     s=0.60; dy=945-1492*s   # CTA bottom a 945 (margine come il top)
-    cv=compose_bg(pl,amb,W,H,SA,-560,s,(W-1024*s)/2,dy,[(225,790,800,1300),(105,1310,920,1505)],f=22)
-    E={key:element(src,M[key],B[key]) for key in B}
+    cv=compose_detail(pl,amb,W,H,SA,-560,s,(W-1024*s)/2,dy)
+    E={key:element_matte(src,pl,M[key],B[key]) for key in B}
     y=headline_rows(cv,E,B,[['scopri'],['bonus','casino'],['oggi']],0.78,52)
     return cv,(y,835*s+dy)
 
@@ -41,10 +42,14 @@ def slide5():
     allm=np.zeros_like(M['bonus'])
     for m in M.values(): allm|=m
     pl=plate(src,allm)
-    amb=ambient(pl,[(300,740,730,1180),(10,1150,1014,1330),(120,1300,905,1510)])
+    M={k:textmask(src,[b],dil=5) for k,b in B.items()}  # matte stretto: niente ombra lunga sotto le lettere
+    amb=ambient_soft(pl,[(320,760,710,1170),(20,1160,1004,1320),(130,1310,895,1500)])
     s=0.60; dy=945-1484*s
-    cv=compose_bg(pl,amb,W,H,SA,-560,s,(W-1024*s)/2,dy,[(150,500,875,1150),(140,1150,885,1330),(125,1300,900,1510)],f=32)
-    E={key:element(src,M[key],B[key]) for key in B}
+    # ellisse attorno a cristallo+piattaforma+CTA, fusa in dominio gradiente
+    import math
+    ell=[(512+440*math.cos(t/40*2*math.pi), 1130+400*math.sin(t/40*2*math.pi)) for t in range(40)]
+    cv=compose_poisson(pl,amb,W,H,SA,-650,s,(W-1024*s)/2,dy,[[(4,470),(1020,470),(1020,1600),(4,1600)]])
+    E={key:element_matte(src,pl,M[key],B[key]) for key in B}
     y=headline_rows(cv,E,B,[['confronta','imigliori'],['bonus','casino']],0.715,70,gap_x=22,gap_y=0)
     return cv,(y,775*s+dy)
 

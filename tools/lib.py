@@ -63,6 +63,19 @@ def rectmask(shape, boxes):
     m=np.zeros(shape[:2],np.uint8)
     for x0,y0,x1,y1 in boxes: m[y0:y1,x0:x1]=1
     return m
+def ambient_soft(pl, objboxes, scale=0.125, blur=5, grow=40, soft=35):
+    s=pl.astype(np.uint8)
+    sm=cv2.resize(s,None,fx=scale,fy=scale,interpolation=cv2.INTER_AREA)
+    m=rectmask(pl.shape,objboxes)
+    mm=cv2.resize(m,(sm.shape[1],sm.shape[0]),interpolation=cv2.INTER_NEAREST)
+    mm=cv2.dilate(mm,np.ones((5,5),np.uint8))
+    ip=cv2.inpaint(sm,mm*255,30,cv2.INPAINT_TELEA)
+    ip=cv2.GaussianBlur(ip,(0,0),blur)
+    ip=cv2.resize(ip,(s.shape[1],s.shape[0]),interpolation=cv2.INTER_CUBIC).astype(np.float32)
+    k=cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(2*grow+1,2*grow+1))
+    a=cv2.GaussianBlur(cv2.dilate(m,k).astype(np.float32),(0,0),soft)
+    a=np.maximum(a,m.astype(np.float32))[...,None]
+    return pl*(1-a)+ip*a
 def ambient(pl, objboxes, scale=0.25, blur=6):
     s=pl.astype(np.uint8)
     sm=cv2.resize(s,None,fx=scale,fy=scale,interpolation=cv2.INTER_AREA)
@@ -98,3 +111,44 @@ def compose_bg(pl, amb, W,H, s_amb, y_amb, s_obj, x_obj, y_obj, objbox, f=40):
     pp=p[cy0-Y:cy1-Y, cx0-X:cx1-X]; mm=m[cy0-Y:cy1-Y, cx0-X:cx1-X]
     cv[cy0:cy1,cx0:cx1]=cv[cy0:cy1,cx0:cx1]*(1-mm)+pp*mm
     return cv
+def element_matte(src, pl, mask, box, feather=1.5, t0=10, t1=45):
+    """alpha da differenza col fondo ricostruito: porta solo lettere+ombra, non il fondo del master."""
+    x0,y0,x1,y1=box
+    d=np.abs(src-pl).max(axis=2)
+    a=np.clip((d-t0)/(t1-t0),0,1)
+    core=cv2.erode(mask,np.ones((9,9),np.uint8)).astype(np.float32)
+    a=np.maximum(a*mask,core)
+    a=cv2.GaussianBlur(a,(0,0),feather)
+    return src[y0:y1,x0:x1].copy(), a[y0:y1,x0:x1]
+def compose_detail(pl, amb, W,H, s_amb, y_amb, s_obj, x_obj, y_obj):
+    """sfondo = ambient a scala s_amb; oggetti = (plate - ambient) a scala s_obj, sommati: nessuna maschera/bordo."""
+    W=int(round(W*F)); H=int(round(H*F)); s_amb*=F; y_amb=int(round(y_amb*F)); s_obj*=F; x_obj*=F; y_obj*=F
+    a=resize(amb,s_amb); ah,aw=a.shape[:2]; xa=(aw-W)//2
+    cv=a[-y_amb:-y_amb+H, xa:xa+W].copy()
+    P=300
+    D=cv2.copyMakeBorder(pl-amb,P,P,P,P,cv2.BORDER_CONSTANT,value=0)
+    d=resize(D,s_obj); dh,dw=d.shape[:2]
+    X=int(round(x_obj-P*s_obj)); Y=int(round(y_obj-P*s_obj))
+    cx0=max(0,X); cy0=max(0,Y); cx1=min(W,X+dw); cy1=min(H,Y+dh)
+    cv[cy0:cy1,cx0:cx1]+=d[cy0-Y:cy1-Y, cx0-X:cx1-X]
+    return cv
+def compose_poisson(pl, amb, W,H, s_amb, y_amb, s_obj, x_obj, y_obj, polys, mode=cv2.NORMAL_CLONE):
+    """ambient grande + plate piccolo fuso in dominio gradiente (seamlessClone) dentro poligoni src."""
+    W=int(round(W*F)); H=int(round(H*F)); s_amb*=F; y_amb=int(round(y_amb*F)); s_obj*=F; x_obj*=F; y_obj*=F
+    a=resize(amb,s_amb); ah,aw=a.shape[:2]; xa=(aw-W)//2
+    dst=np.clip(a[-y_amb:-y_amb+H, xa:xa+W],0,255).astype(np.uint8)
+    P=300
+    plp=cv2.copyMakeBorder(pl,P,P,P,P,cv2.BORDER_REFLECT)
+    p=resize(plp,s_obj); X=int(round(x_obj-P*s_obj)); Y=int(round(y_obj-P*s_obj))
+    srcimg=np.zeros_like(dst)
+    ph,pw=p.shape[:2]
+    cx0=max(0,X); cy0=max(0,Y); cx1=min(W,X+pw); cy1=min(H,Y+ph)
+    srcimg[cy0:cy1,cx0:cx1]=np.clip(p[cy0-Y:cy1-Y, cx0-X:cx1-X],0,255).astype(np.uint8)
+    m=np.zeros((H,W),np.uint8)
+    for poly in polys:
+        pts=np.array([[x_obj+px*s_obj, y_obj+py*s_obj] for px,py in poly],np.int32)
+        cv2.fillPoly(m,[pts],255)
+    m[:2]=0; m[-2:]=0; m[:,:2]=0; m[:,-2:]=0
+    ys,xs=np.where(m>0); c=((xs.min()+xs.max())//2,(ys.min()+ys.max())//2)
+    out=cv2.seamlessClone(srcimg,dst,m,c,mode)
+    return out.astype(np.float32)
