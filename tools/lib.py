@@ -1,5 +1,10 @@
 import cv2, numpy as np
-def load(i): return cv2.imread(f'{i}.webp').astype(np.float32)
+from PIL import Image
+F=1.0
+def setF(v):
+    global F; F=v
+import glob, os
+def load(i): return cv2.imread(sorted(glob.glob(os.path.join(os.path.dirname(__file__),'..','master','320x480',f'0{i}_*.webp')))[0]).astype(np.float32)
 def textmask(src, boxes, dil=10, blue=False, lt=95):
     m=np.zeros(src.shape[:2],np.uint8)
     b,g,r=[src[...,k] for k in range(3)]
@@ -28,8 +33,12 @@ def element(src, mask, box, feather=2.0):
     a=cv2.GaussianBlur(mask.astype(np.float32),(0,0),feather)[y0:y1,x0:x1]
     return src[y0:y1,x0:x1].copy(), a
 def resize(img, s):
-    return cv2.resize(img,None,fx=s,fy=s,interpolation=cv2.INTER_LANCZOS4 if s>1 else cv2.INTER_AREA)
+    h,w=img.shape[:2]; nw,nh=max(1,int(round(w*s))),max(1,int(round(h*s)))
+    if img.ndim==2:
+        return np.array(Image.fromarray(img.astype(np.float32),'F').resize((nw,nh),Image.LANCZOS))
+    return np.dstack([np.array(Image.fromarray(img[...,c].astype(np.float32),'F').resize((nw,nh),Image.LANCZOS)) for c in range(3)])
 def paste(canvas, rgb, a, x, y, s):
+    x*=F; y*=F; s*=F
     r=resize(rgb,s); aa=np.clip(resize(a,s),0,1)[...,None]
     h,w=r.shape[:2]; x=int(round(x)); y=int(round(y))
     canvas[y:y+h,x:x+w]=canvas[y:y+h,x:x+w]*(1-aa)+r*aa
@@ -47,11 +56,9 @@ def bg_canvas(pl, W, H, s, dy):
     out[yd:yd+h]=big[ys:ys+h]
     if yd>0: out[:yd]=big[ys:ys+1]  # shouldn't happen much
     return out, x0
-def save(canvas, path, W=300, H=250):
-    c=np.clip(canvas,0,255).astype(np.uint8)
-    cv2.imwrite(path.replace('.png','_work.png'),c)
-    f=cv2.resize(c,(W,H),interpolation=cv2.INTER_AREA)
-    cv2.imwrite(path,f)
+def save(canvas, path):
+    c=np.clip(np.round(canvas),0,255).astype(np.uint8)
+    cv2.imwrite(path,c)
 def rectmask(shape, boxes):
     m=np.zeros(shape[:2],np.uint8)
     for x0,y0,x1,y1 in boxes: m[y0:y1,x0:x1]=1
@@ -71,7 +78,7 @@ def feathered_rect(h,w,box,f):
     m[max(0,y0):y1,max(0,x0):x1]=1
     return cv2.GaussianBlur(m,(0,0),f)
 def compose_bg(pl, amb, W,H, s_amb, y_amb, s_obj, x_obj, y_obj, objbox, f=40):
-    """amb scaled s_amb, top at canvas y_amb (negative crops). plate scaled s_obj at (x_obj,y_obj), blended within objbox (src coords)."""
+    W=int(round(W*F)); H=int(round(H*F)); s_amb*=F; y_amb=int(round(y_amb*F)); s_obj*=F; x_obj*=F; y_obj*=F; f*=F
     a=resize(amb,s_amb); ah,aw=a.shape[:2]
     xa=(W-aw)//2
     cv=np.zeros((H,W,3),np.float32)
